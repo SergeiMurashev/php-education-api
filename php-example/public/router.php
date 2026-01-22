@@ -9,13 +9,23 @@ if ($path === "/api/ping") {
     exit;
 }
 
-if (str_starts_with($path, "/api/users")) {
-    require __DIR__ . "/../api/users.php";
+if (str_starts_with($path, "/api/auth")) {
+    require __DIR__ . "/../api/auth.php";
     exit;
 }
 
-if (str_starts_with($path, "/api/auth")) {
-    require __DIR__ . "/../api/auth.php";
+if ($path === "/") {
+    require __DIR__ . "/index.php";
+    exit;
+}
+
+if ($path === "/api/me") {
+    require __DIR__ . "/../api/me.php";
+    exit;
+}
+
+if (str_starts_with($path, "/api/users")) {
+    require __DIR__ . "/../api/users.php";
     exit;
 }
 
@@ -24,10 +34,6 @@ if (str_starts_with($path, "/api/posts")) {
     exit;
 }
 
-if ($path === "/") {
-    require __DIR__ . "/index.php";
-    exit;
-}
 
 http_response_code(404);
 header("Content-Type: application/json; charset=utf-8");
