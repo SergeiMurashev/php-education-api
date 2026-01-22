@@ -1,7 +1,7 @@
 <?php
 
-require __DIR__ . "/helpers.php";
-require __DIR__ . "/db.php";
+require __DIR__ . "/../src/helpers.php";
+require __DIR__ . "/../src/db.php";
 
 $pdo = db();
 
@@ -15,63 +15,33 @@ if ($path === "/api/users" && $method === "GET") {
     $deleted = isset($_GET["deleted"]) && $_GET["deleted"] == "1";
 
     if ($all) {
-        $stmt = $pdo->query("SELECT id, email, name, created_at, updated_at, deleted_at FROM users ORDER BY id DESC");
+        $stmt = $pdo->query("SELECT id, email, name, created_at, updated_at, deleted_at FROM users ORDER BY created_at DESC");
         jsonResponse($stmt->fetchAll(PDO::FETCH_ASSOC));
         exit;
     }
 
     if ($deleted) {
-        $stmt = $pdo->query("SELECT id, email, name, created_at, updated_at, deleted_at FROM users WHERE deleted_at IS NOT NULL ORDER BY id DESC");
+        $stmt = $pdo->query("SELECT id, email, name, created_at, updated_at, deleted_at FROM users WHERE deleted_at IS NOT NULL ORDER BY created_at DESC");
         jsonResponse($stmt->fetchAll(PDO::FETCH_ASSOC));
         exit;
     }
 
-    $stmt = $pdo->query("SELECT id, email, name, created_at, updated_at, deleted_at FROM users WHERE deleted_at IS NULL ORDER BY id DESC");
+    $stmt = $pdo->query("SELECT id, email, name, created_at, updated_at, deleted_at FROM users WHERE deleted_at IS NULL ORDER BY created_at DESC");
     jsonResponse($stmt->fetchAll(PDO::FETCH_ASSOC));
     exit;
 }
 
-// POST /api/users
+// POST /api/auth/register
 if ($path === "/api/users" && $method === "POST") {
-    $data = readJsonBody();
-
-    $email = strtolower(trim($data["email"] ?? ""));
-    $name = trim($data["name"] ?? "");
-
-    if ($email === "" || $name === "") {
-        jsonResponse(["error" => "email and name are required"], 422);
-        exit;
-    }
-
-    try {
-        $stmt = $pdo->prepare("
-            INSERT INTO users (email, name)
-            VALUES (:email, :name)
-            RETURNING id, email, name, created_at, updated_at, deleted_at
-        ");
-        $stmt->execute([
-            ":email" => $email,
-            ":name" => $name
-        ]);
-
-        $user = $stmt->fetch(PDO::FETCH_ASSOC);
-        jsonResponse($user, 201);
-        exit;
-
-    } catch (PDOException $e) {
-        if ($e->getCode() === "23505") {
-            jsonResponse(["error" => "email already exists"], 409);
-            exit;
-        }
-
-        jsonResponse(["error" => "db error"], 500);
-        exit;
-    }
+    jsonResponse([
+        "error" => "Use POST /api/auth/register to create user"
+    ], 405);
+    exit;
 }
 
-// /api/users/{id}
-if (preg_match("#^/api/users/(\d+)$#", $path, $m)) {
-    $id = (int)$m[1];
+// /api/users/{uuid}
+if (preg_match("#^/api/users/([0-9a-fA-F-]{36})$#", $path, $m)) {
+    $id = $m[1]; // ✅ UUID строкой
 
     // GET /api/users/{id}
     if ($method === "GET") {
@@ -184,8 +154,8 @@ if (preg_match("#^/api/users/(\d+)$#", $path, $m)) {
 }
 
 // POST /api/users/{id}/restore
-if (preg_match("#^/api/users/(\d+)/restore$#", $path, $m) && $method === "POST") {
-    $id = (int)$m[1];
+if (preg_match("#^/api/users/([0-9a-fA-F-]{36})/restore$#", $path, $m) && $method === "POST") {
+    $id = $m[1]; // ✅ UUID строкой
 
     $stmt = $pdo->prepare("
         UPDATE users
