@@ -7,6 +7,43 @@ require __DIR__ . "/../src/jwt.php";
 $config = require __DIR__ . "/../src/config.php";
 $pdo = db();
 
+function issueTokens(PDO $pdo, array $user, array $config): array
+{
+    $now = time();
+
+    $accessTtl  = (int)($config["access_ttl_seconds"] ?? 900);      // 15 мин
+    $refreshTtl = (int)($config["refresh_ttl_seconds"] ?? 604800);  // 7 дней
+
+    $accessPayload = [
+        "sub"   => $user["id"],
+        "email" => $user["email"],
+        "role"  => $user["role"] ?? "user",
+        "iat"   => $now,
+        "exp"   => $now + $accessTtl,
+    ];
+
+    $accessToken = jwt_encode($accessPayload, $config["jwt_secret"]);
+
+    // refresh token = random string
+    $refreshToken = bin2hex(random_bytes(32));
+    $refreshHash  = hash("sha256", $refreshToken);
+
+    $stmt = $pdo->prepare("
+        INSERT INTO refresh_tokens (user_id, token_hash, expires_at)
+        VALUES (:user_id, :token_hash, NOW() + (:ttl || ' seconds')::interval)
+    ");
+    $stmt->execute([
+        ":user_id"    => $user["id"],
+        ":token_hash" => $refreshHash,
+        ":ttl"        => (string)$refreshTtl,
+    ]);
+
+    return [
+        "access_token"  => $accessToken,
+        "refresh_token" => $refreshToken,
+    ];
+}
+
 $path = parse_url($_SERVER["REQUEST_URI"], PHP_URL_PATH);
 $method = $_SERVER["REQUEST_METHOD"];
 
@@ -28,15 +65,18 @@ if ($path === "/api/auth/register" && $method === "POST") {
         $stmt = $pdo->prepare("
             INSERT INTO users (email, name, password_hash)
             VALUES (:email, :name, :hash)
-            RETURNING id, email, name
+            RETURNING id, email, name, role
         ");
         $stmt->execute([
             ":email" => $email,
-            ":name" => $name,
-            ":hash" => $hash,
+            ":name"  => $name,
+            ":hash"  => $hash,
         ]);
 
         $user = $stmt->fetch(PDO::FETCH_ASSOC);
+        if (!$user) {
+            jsonFail("failed to create user", 500);
+        }
 
     } catch (PDOException $e) {
         if ($e->getCode() === "23505") {
@@ -45,19 +85,11 @@ if ($path === "/api/auth/register" && $method === "POST") {
         jsonFail("db error", 500);
     }
 
-    $now = time();
-    $payload = [
-        "sub" => $user["id"],
-        "email" => $user["email"],
-        "iat" => $now,
-        "exp" => $now + (int)$config["jwt_ttl_seconds"],
-    ];
-
-    $token = jwt_encode($payload, $config["jwt_secret"]);
+    $tokens = issueTokens($pdo, $user, $config);
 
     jsonResponse([
-        "token" => $token,
-        "user" => $user,
+        "tokens" => $tokens,
+        "user"   => $user,
     ], 201);
     exit;
 }
@@ -74,7 +106,7 @@ if ($path === "/api/auth/login" && $method === "POST") {
     }
 
     $stmt = $pdo->prepare("
-        SELECT id, email, name, password_hash
+        SELECT id, email, name, role, password_hash
         FROM users
         WHERE email = :email AND deleted_at IS NULL
         LIMIT 1
@@ -86,23 +118,70 @@ if ($path === "/api/auth/login" && $method === "POST") {
         jsonFail("invalid credentials", 401);
     }
 
-    $now = time();
-    $payload = [
-        "sub" => $user["id"],
-        "email" => $user["email"],
-        "iat" => $now,
-        "exp" => $now + (int)$config["jwt_ttl_seconds"],
-    ];
-
-    $token = jwt_encode($payload, $config["jwt_secret"]);
+    $tokens = issueTokens($pdo, $user, $config);
 
     jsonResponse([
-        "token" => $token,
+        "tokens" => $tokens,
         "user" => [
-            "id" => $user["id"],
+            "id"    => $user["id"],
             "email" => $user["email"],
-            "name" => $user["name"],
+            "name"  => $user["name"],
+            "role"  => $user["role"],
         ]
+    ]);
+    exit;
+}
+
+// POST /api/auth/refresh
+if ($path === "/api/auth/refresh" && $method === "POST") {
+    $data = readJsonBody();
+    $refreshToken = (string)($data["refresh_token"] ?? "");
+
+    if ($refreshToken === "") {
+        jsonFail("refresh_token is required", 422);
+    }
+
+    $hash = hash("sha256", $refreshToken);
+
+    $stmt = $pdo->prepare("
+        SELECT rt.id, rt.user_id, rt.expires_at, rt.revoked_at,
+               u.id as uid, u.email, u.name, u.role
+        FROM refresh_tokens rt
+        JOIN users u ON u.id = rt.user_id
+        WHERE rt.token_hash = :hash
+        LIMIT 1
+    ");
+    $stmt->execute([":hash" => $hash]);
+    $row = $stmt->fetch(PDO::FETCH_ASSOC);
+
+    if (!$row) {
+        jsonFail("invalid refresh token", 401);
+    }
+
+    if ($row["revoked_at"] !== null) {
+        jsonFail("refresh token revoked", 401);
+    }
+
+    if (strtotime($row["expires_at"]) < time()) {
+        jsonFail("refresh token expired", 401);
+    }
+
+    // rotation: revoke old refresh token
+    $stmt = $pdo->prepare("UPDATE refresh_tokens SET revoked_at = NOW() WHERE id = :id");
+    $stmt->execute([":id" => $row["id"]]);
+
+    $user = [
+        "id"    => $row["uid"],
+        "email" => $row["email"],
+        "name"  => $row["name"],
+        "role"  => $row["role"],
+    ];
+
+    $tokens = issueTokens($pdo, $user, $config);
+
+    jsonResponse([
+        "tokens" => $tokens,
+        "user"   => $user,
     ]);
     exit;
 }

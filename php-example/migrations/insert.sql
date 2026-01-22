@@ -1,12 +1,12 @@
 
 -- 1) users
-INSERT INTO users (email, name, password_hash)
+INSERT INTO users (email, name, password_hash, role)
 VALUES
-    ('sergey@royalty.dev', 'Сергей', crypt('123456', gen_salt('bf'))),
-    ('ivan@royalty.dev',   'Иван',   crypt('123456', gen_salt('bf'))),
-    ('anna@royalty.dev',   'Анна',   crypt('123456', gen_salt('bf'))),
-    ('petr@royalty.dev',   'Пётр',   crypt('123456', gen_salt('bf'))),
-    ('kate@royalty.dev',   'Катя',   crypt('123456', gen_salt('bf')))
+    ('sergey@royalty.dev', 'Сергей', crypt('123456', gen_salt('bf')), 'admin'),
+    ('ivan@royalty.dev',   'Иван',   crypt('123456', gen_salt('bf')), 'user'),
+    ('anna@royalty.dev',   'Анна',   crypt('123456', gen_salt('bf')), 'user'),
+    ('petr@royalty.dev',   'Пётр',   crypt('123456', gen_salt('bf')), 'user'),
+    ('kate@royalty.dev',   'Катя',   crypt('123456', gen_salt('bf')), 'user')
 ON CONFLICT (email) DO NOTHING;
 
 -- 2) posts (привязываем по email через SELECT id)
