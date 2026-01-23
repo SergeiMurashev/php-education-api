@@ -31,11 +31,48 @@ if ($path === "/api/users" && $method === "GET") {
     exit;
 }
 
-// POST /api/auth/register
+// POST /api/users (admin creates employee)
 if ($path === "/api/users" && $method === "POST") {
+    $data = readJsonBody();
+
+    $email = strtolower(trim($data["email"] ?? ""));
+    $name  = trim($data["name"] ?? "");
+
+    if ($email === "" || $name === "") {
+        jsonFail("email and name are required", 422);
+    }
+
+    $tempPassword = bin2hex(random_bytes(6));
+    $hash = password_hash($tempPassword, PASSWORD_BCRYPT);
+
+    try {
+        $stmt = $pdo->prepare("
+            INSERT INTO users (email, name, password_hash)
+            VALUES (:email, :name, :hash)
+            RETURNING id, email, name, role, created_at
+        ");
+        $stmt->execute([
+            ':email' => $email,
+            ':name'  => $name,
+            ':hash'  => $hash,
+        ]);
+
+        $user = $stmt->fetch(PDO::FETCH_ASSOC);
+        if (!$user) {
+            jsonFail('failed to create user', 500);
+        }
+
+    } catch (PDOException $e) {
+        if ($e->getCode() === '23505') {
+            jsonFail('email already exists', 409);
+        }
+        jsonFail('db error', 500);
+    }
+
     jsonResponse([
-        "error" => "Use POST /api/auth/register to create user"
-    ], 405);
+        'user' => $user,
+        'temporary_password' => $tempPassword,
+    ], 201);
     exit;
 }
 
