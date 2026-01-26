@@ -2,6 +2,10 @@
 
 function ansi(string $text, string $color): string
 {
+    if (!supportsAnsi()) {
+        return $text;
+    }
+
     $map = [
         "reset" => "\033[0m",
         "gray" => "\033[90m",
@@ -34,4 +38,12 @@ function logRequest(string $method, string $path, int $status, float $ms): void
 
     $line = "[" . date("H:i:s") . "] $ip $methodStr $path -> $statusStr ($timeStr)";
     error_log($line);
+}
+
+function supportsAnsi(): bool
+{
+    if (PHP_SAPI === 'cli' && function_exists('posix_isatty')) {
+        return posix_isatty(STDOUT);
+    }
+    return false;
 }
