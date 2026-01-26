@@ -1,49 +1,81 @@
-# PHP Education API (UUID + JWT + PostgreSQL)
+<?php
 
-Мини-проект для практики REST API на PHP:
-- PostgreSQL (UUID, связи)
-- JWT авторизация (Bearer token)
-- CRUD постов (только владелец может менять/удалять)
-- Soft delete
-- Локальный dev-сервер `php -S`
+require __DIR__ . "/../src/helpers.php";
+require __DIR__ . "/../src/db.php";
+require __DIR__ . "/../src/jwt.php";
+$config = require __DIR__ . "/../src/config.php";
 
----
+$token = getBearerToken();
+if (!$token) {
+    jsonFail("missing bearer token", 401);
+}
 
-## Структура проекта
-```
-cd ./Ваша папка
-php-example/
-public/
-index.php
-router.php
-src/
-config.php
-db.php
-helpers.php
-jwt.php
-logger.php
-api/
-auth.php
-users.php
-posts.php
-ping.php
-migrations/
-schema.sql
-insert.sql
-```
+try {
+    $claims = jwt_decode($token, $config["jwt_secret"]);
+} catch (Exception $e) {
+    jsonFail("invalid token", 401);
+}
 
----
+if (($claims["role"] ?? null) !== "admin") {
+    jsonFail("forbidden", 403);
+}
 
-## Запуск
+$pdo = db();
 
-Перейти в папку проекта:
+$path = $_SERVER["REQUEST_URI"] ?? "";
+$method = $_SERVER["REQUEST_METHOD"] ?? "";
 
-```bash
-cd php-example
+// GET /api/users
+if ($path === "/api/users" && $method === "GET") {
+    $stmt = $pdo->query("SELECT id, email, name, role, created_at FROM users ORDER BY created_at DESC");
+    $users = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    jsonResponse($users);
+    exit;
+}
 
-php -S 127.0.0.1:8000 -t public public/router.php 
+// POST /api/users (admin creates employee)
+if ($path === "/api/users" && $method === "POST") {
+    $data = readJsonBody();
 
-```
+    $email = strtolower(trim($data["email"] ?? ""));
+    $name  = trim($data["name"] ?? "");
 
-Открыть в браузере:
-```	http://127.0.0.1:8000```  или	```http://127.0.0.1:8000/api/ping```
+    if ($email === "" || $name === "") {
+        jsonFail("email and name are required", 422);
+    }
+
+    $tempPassword = bin2hex(random_bytes(6));
+    $hash = password_hash($tempPassword, PASSWORD_BCRYPT);
+
+    try {
+        $stmt = $pdo->prepare("
+            INSERT INTO users (email, name, password_hash)
+            VALUES (:email, :name, :hash)
+            RETURNING id, email, name, role, created_at
+        ");
+        $stmt->execute([
+            ':email' => $email,
+            ':name'  => $name,
+            ':hash'  => $hash,
+        ]);
+
+        $user = $stmt->fetch(PDO::FETCH_ASSOC);
+        if (!$user) {
+            jsonFail('failed to create user', 500);
+        }
+
+    } catch (PDOException $e) {
+        if ($e->getCode() === '23505') {
+            jsonFail('email already exists', 409);
+        }
+        jsonFail('db error', 500);
+    }
+
+    jsonResponse([
+        'user' => $user,
+        'temporary_password' => $tempPassword,
+    ], 201);
+    exit;
+}
+
+// Other routes and logic below...

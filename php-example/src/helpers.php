@@ -47,5 +47,3 @@ function jsonFail(string $message, int $status = 400): void
     jsonResponse(["error" => $message], $status);
     exit;
 }
-
-require_once __DIR__ . "/logger.php";

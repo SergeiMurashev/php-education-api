@@ -1,15 +1,5 @@
-<!doctype html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <title>PHP page</title>
-</head>
-<body>
-
 <?php
-echo "<h1>Тест привет</h1>";
-echo "<p>Время: " . date("H:i:s") . "</p>";
-?>
 
-</body>
-</html>
+error_log("REQUEST: {$_SERVER['REQUEST_METHOD']} {$_SERVER['REQUEST_URI']}");
+
+require __DIR__ . '/router.php';
