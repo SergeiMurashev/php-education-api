@@ -8,6 +8,12 @@ $pdo = db();
 $path = parse_url($_SERVER["REQUEST_URI"], PHP_URL_PATH);
 $method = $_SERVER["REQUEST_METHOD"];
 
+error_log(sprintf(
+    '[users.php] %s %s',
+    $method,
+    $path
+));
+
 // GET /api/users
 if ($path === "/api/users" && $method === "GET") {
 
@@ -34,6 +40,8 @@ if ($path === "/api/users" && $method === "GET") {
 // POST /api/users (admin creates employee)
 if ($path === "/api/users" && $method === "POST") {
     $data = readJsonBody();
+
+    error_log('[users.php] CREATE user payload: ' . json_encode($data, JSON_UNESCAPED_UNICODE));
 
     $email = strtolower(trim($data["email"] ?? ""));
     $name  = trim($data["name"] ?? "");
@@ -66,6 +74,7 @@ if ($path === "/api/users" && $method === "POST") {
         if ($e->getCode() === '23505') {
             jsonFail('email already exists', 409);
         }
+        error_log('[users.php] DB ERROR: ' . $e->getMessage());
         jsonFail('db error', 500);
     }
 
@@ -77,8 +86,8 @@ if ($path === "/api/users" && $method === "POST") {
 }
 
 // /api/users/{uuid}
-if (preg_match("#^/api/users/([0-9a-fA-F-]{36})$#", $path, $m)) {
-    $id = $m[1]; // ✅ UUID строкой
+if (preg_match('#^/api/users/([0-9a-fA-F-]{36})/?$#', $path, $m)) {
+    $id = $m[1];
 
     // GET /api/users/{id}
     if ($method === "GET") {
@@ -91,8 +100,14 @@ if (preg_match("#^/api/users/([0-9a-fA-F-]{36})$#", $path, $m)) {
         $stmt->execute([":id" => $id]);
         $user = $stmt->fetch(PDO::FETCH_ASSOC);
 
+        error_log(sprintf(
+            '[users.php] GET user by id=%s result=%s',
+            $id,
+            $user ? 'FOUND' : 'NOT_FOUND'
+        ));
+
         if (!$user) {
-            jsonResponse(["error" => "User not found"], 404);
+            jsonFail("User not found", 404);
             exit;
         }
 
@@ -103,6 +118,8 @@ if (preg_match("#^/api/users/([0-9a-fA-F-]{36})$#", $path, $m)) {
     // PUT /api/users/{id}
     if ($method === "PUT") {
         $data = readJsonBody();
+
+        error_log('[users.php] UPDATE user id=' . $id . ' payload=' . json_encode($data, JSON_UNESCAPED_UNICODE));
 
         $email = isset($data["email"]) ? strtolower(trim($data["email"])) : null;
         $name = isset($data["name"]) ? trim($data["name"]) : null;
@@ -159,7 +176,8 @@ if (preg_match("#^/api/users/([0-9a-fA-F-]{36})$#", $path, $m)) {
                 exit;
             }
 
-            jsonResponse(["error" => "db error"], 500);
+            error_log('[users.php] DB ERROR: ' . $e->getMessage());
+            jsonFail("db error", 500);
             exit;
         }
     }
@@ -176,6 +194,8 @@ if (preg_match("#^/api/users/([0-9a-fA-F-]{36})$#", $path, $m)) {
         $stmt->execute([":id" => $id]);
 
         $user = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        error_log('[users.php] DELETE user id=' . $id . ' result=' . ($user ? 'OK' : 'NOT_FOUND'));
 
         if (!$user) {
             jsonResponse(["error" => "User not found or already deleted"], 404);
@@ -214,4 +234,5 @@ if (preg_match("#^/api/users/([0-9a-fA-F-]{36})/restore$#", $path, $m) && $metho
     exit;
 }
 
-jsonResponse(["error" => "Not found"], 404);
+error_log('[users.php] ROUTE NOT FOUND: ' . $method . ' ' . $path);
+jsonFail("Not found", 404);
