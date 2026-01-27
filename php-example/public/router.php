@@ -34,7 +34,11 @@ if (str_starts_with($path, "/api/posts")) {
     exit;
 }
 
-// 404
+if (str_starts_with($path, "/api/comments") || str_contains($path, "/comments")) {
+    require __DIR__ . "/../api/comments.php";
+    exit;
+}
+
 http_response_code(404);
 header("Content-Type: application/json; charset=utf-8");
 echo json_encode(
