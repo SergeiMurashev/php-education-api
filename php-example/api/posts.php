@@ -1,151 +1,65 @@
 <?php
 
-require __DIR__ . "/../src/helpers.php";
-require __DIR__ . "/../src/db.php";
-require __DIR__ . "/../src/jwt.php";
+use App\Http\Middleware\AuthMiddleware;
+use App\Repository\PostRepository;
+use App\Usecase\PostUsecase;
 
-$config = require __DIR__ . "/../src/config.php";
 $pdo = db();
+$userId = AuthMiddleware::requireUserId();
 
-$path = parse_url($_SERVER["REQUEST_URI"], PHP_URL_PATH);
-$method = $_SERVER["REQUEST_METHOD"];
+$usecase = new PostUsecase(
+    new PostRepository($pdo)
+);
 
-// auth middleware
-$token = getBearerToken();
-if (!$token) {
-    jsonFail("missing bearer token", 401);
-}
+$path = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
+$method = $_SERVER['REQUEST_METHOD'];
 
 try {
-    $claims = jwt_decode($token, $config["jwt_secret"]);
-} catch (Exception $e) {
-    jsonFail("invalid token: " . $e->getMessage(), 401);
-}
-
-$userId = $claims["sub"] ?? null;
-if (!$userId) {
-    jsonFail("invalid token payload", 401);
-}
-
-// GET /api/posts
-if ($path === "/api/posts" && $method === "GET") {
-    $stmt = $pdo->query("
-        SELECT id, user_id, title, body, created_at, updated_at
-        FROM posts
-        WHERE deleted_at IS NULL
-        ORDER BY created_at DESC
-    ");
-    jsonResponse($stmt->fetchAll(PDO::FETCH_ASSOC));
-    exit;
-}
-
-// POST /api/posts (user_id берём из токена!)
-if ($path === "/api/posts" && $method === "POST") {
-    $data = readJsonBody();
-
-    $title = trim($data["title"] ?? "");
-    $body  = trim($data["body"] ?? "");
-
-    if ($title === "" || $body === "") {
-        jsonFail("title and body are required", 422);
+    // GET /api/posts
+    if ($path === '/api/posts' && $method === 'GET') {
+        Response::ok($usecase->list());
     }
 
-    $stmt = $pdo->prepare("
-        INSERT INTO posts (user_id, title, body)
-        VALUES (:user_id, :title, :body)
-        RETURNING id, user_id, title, body, created_at, updated_at
-    ");
-    $stmt->execute([
-        ":user_id" => $userId,
-        ":title" => $title,
-        ":body" => $body,
-    ]);
-
-    jsonResponse($stmt->fetch(PDO::FETCH_ASSOC), 201);
-    exit;
-}
-
-// GET /api/posts/{id}
-if (preg_match("#^/api/posts/([0-9a-fA-F-]{36})$#", $path, $m) && $method === "GET") {
-    $postId = $m[1];
-
-    $stmt = $pdo->prepare("
-        SELECT id, user_id, title, body, created_at, updated_at, deleted_at
-        FROM posts
-        WHERE id = :id
-        LIMIT 1
-    ");
-    $stmt->execute([":id" => $postId]);
-    $post = $stmt->fetch(PDO::FETCH_ASSOC);
-
-    if (!$post) {
-        jsonFail("post not found", 404);
+    // POST /api/posts
+    if ($path === '/api/posts' && $method === 'POST') {
+        $data = Request::json();
+        Response::created(
+            $usecase->create(
+                $userId,
+                $data['title'] ?? '',
+                $data['body'] ?? ''
+            )
+        );
     }
 
-    jsonResponse($post);
-    exit;
-}
+    // /api/posts/{id}
+    if (preg_match('#^/api/posts/([0-9a-f-]{36})$#', $path, $m)) {
+        $id = $m[1];
 
-// PUT /api/posts/{id} (только владелец)
-if (preg_match("#^/api/posts/([0-9a-fA-F-]{36})$#", $path, $m) && $method === "PUT") {
-    $postId = $m[1];
-    $data = readJsonBody();
+        if ($method === 'GET') {
+            Response::ok($usecase->get($id));
+        }
 
-    $title = isset($data["title"]) ? trim($data["title"]) : null;
-    $body  = isset($data["body"]) ? trim($data["body"]) : null;
+        if ($method === 'PUT') {
+            $data = Request::json();
+            Response::ok(
+                $usecase->update(
+                    $id,
+                    $userId,
+                    $data['title'] ?? null,
+                    $data['body'] ?? null
+                )
+            );
+        }
 
-    if ($title === null && $body === null) {
-        jsonFail("nothing to update", 422);
+        if ($method === 'DELETE') {
+            $usecase->delete($id, $userId);
+            Response::ok(['ok' => true]);
+        }
     }
 
-    // обновляем только если post принадлежит текущему user
-    $stmt = $pdo->prepare("
-        UPDATE posts
-        SET title = COALESCE(:title, title),
-            body  = COALESCE(:body, body),
-            updated_at = NOW()
-        WHERE id = :id AND user_id = :user_id AND deleted_at IS NULL
-        RETURNING id, user_id, title, body, created_at, updated_at
-    ");
-    $stmt->execute([
-        ":id" => $postId,
-        ":user_id" => $userId,
-        ":title" => $title,
-        ":body" => $body,
-    ]);
+    Response::notFound();
 
-    $post = $stmt->fetch(PDO::FETCH_ASSOC);
-    if (!$post) {
-        jsonFail("post not found or forbidden", 404);
-    }
-
-    jsonResponse($post);
-    exit;
+} catch (DomainException $e) {
+    Response::error($e->getMessage(), 422);
 }
-
-// DELETE /api/posts/{id} (soft delete + только владелец)
-if (preg_match("#^/api/posts/([0-9a-fA-F-]{36})$#", $path, $m) && $method === "DELETE") {
-    $postId = $m[1];
-
-    $stmt = $pdo->prepare("
-        UPDATE posts
-        SET deleted_at = NOW(),
-            updated_at = NOW()
-        WHERE id = :id AND user_id = :user_id AND deleted_at IS NULL
-        RETURNING id
-    ");
-    $stmt->execute([
-        ":id" => $postId,
-        ":user_id" => $userId,
-    ]);
-
-    $row = $stmt->fetch(PDO::FETCH_ASSOC);
-    if (!$row) {
-        jsonFail("post not found or forbidden", 404);
-    }
-
-    jsonResponse(["ok" => true]);
-    exit;
-}
-
-jsonFail("Not found", 404);
